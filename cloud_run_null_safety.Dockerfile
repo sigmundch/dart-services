@@ -15,7 +15,8 @@ RUN chown dart:dart /app
 # The Flutter tool won't perform its actions when run as root.
 USER dart
 
-COPY --chown=dart:dart tool/dart_run.sh /dart_runtime/
+COPY --chown=dart:dart tool/dart_cloud_run.sh /dart_runtime/
+RUN chmod a+x /dart_runtime/dart_cloud_run.sh
 COPY --chown=dart:dart pubspec.* /app/
 RUN pub get
 COPY --chown=dart:dart . /app
@@ -29,12 +30,9 @@ RUN dart pub run grinder setup-flutter-sdk
 # Build the dill file
 RUN dart pub run grinder build-storage-artifacts validate-storage-artifacts
 
-EXPOSE 8080
-
 # Clear out any arguments the base images might have set and ensure we start
 # the Dart app using custom script enabling debug modes.
 CMD []
 
-ENTRYPOINT ["/dart_runtime/dart_run.sh", \
-  "--port", "8080", \
-  "--proxy-target", "https://v1.api.dartpad.dev/"]
+ENTRYPOINT ["/dart_runtime/dart_cloud_run.sh", "--port", "${PORT}", \
+  "--redis-url", "redis://10.0.0.4:6379", "--null-safety"]
