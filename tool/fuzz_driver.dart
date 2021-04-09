@@ -16,7 +16,7 @@ import 'package:dart_services/src/analysis_server.dart' as analysis_server;
 import 'package:dart_services/src/common.dart';
 import 'package:dart_services/src/common_server_impl.dart';
 import 'package:dart_services/src/compiler.dart' as comp;
-import 'package:dart_services/src/sdk_manager.dart';
+import 'package:dart_services/src/sdk.dart';
 import 'package:dart_services/src/server_cache.dart';
 import 'package:dart_services/src/protos/dart_services.pb.dart' as proto;
 
@@ -79,10 +79,10 @@ Usage: slow_test path_to_test_collection
   final sw = Stopwatch()..start();
 
   print('About to setuptools');
-  print(SdkManager.sdk.sdkPath);
+  print(Sdk.sdkPath);
 
   // Warm up the services.
-  await setupTools(SdkManager.sdk.sdkPath);
+  await setupTools(Sdk.sdkPath);
 
   print('Setup tools done');
 
@@ -104,7 +104,7 @@ Usage: slow_test path_to_test_collection
       print('FAILED: ${fse.path}');
 
       // Try and re-cycle the services for the next test after the crash
-      await setupTools(SdkManager.sdk.sdkPath);
+      await setupTools(Sdk.sdkPath);
     }
   }
 
@@ -123,17 +123,17 @@ Future<void> setupTools(String sdkPath) async {
 
   container = MockContainer();
   cache = MockCache();
-  commonServerImpl = CommonServerImpl(container, cache);
+  commonServerImpl = CommonServerImpl(container, cache, false);
   await commonServerImpl.init();
 
-  analysisServer = analysis_server.DartAnalysisServerWrapper();
+  analysisServer = analysis_server.DartAnalysisServerWrapper(false);
   await analysisServer.init();
 
   print('Warming up analysis server');
   await analysisServer.warmup();
 
   print('Warming up compiler');
-  compiler = comp.Compiler(SdkManager.sdk);
+  compiler = comp.Compiler(Sdk(), false);
   await compiler.warmup();
   print('SetupTools done');
 }

@@ -15,23 +15,24 @@ import 'package:path/path.dart' as path;
 import 'common.dart';
 import 'flutter_web.dart';
 import 'pub.dart';
-import 'sdk_manager.dart';
+import 'sdk.dart';
 
 Logger _logger = Logger('compiler');
 
 /// An interface to the dart2js compiler. A compiler object can process one
 /// compile at a time.
 class Compiler {
-  final FlutterSdk _sdk;
+  final Sdk _sdk;
   final FlutterWebManager _flutterWebManager;
   final String _dartdevcPath;
   final BazelWorkerDriver _ddcDriver;
+  final bool _nullSafety;
 
-  Compiler(this._sdk)
-      : _dartdevcPath = path.join(_sdk.sdkPath, 'bin', 'dartdevc'),
+  Compiler(this._sdk, this._nullSafety)
+      : _dartdevcPath = path.join(Sdk.sdkPath, 'bin', 'dartdevc'),
         _ddcDriver = BazelWorkerDriver(
             () => Process.start(
-                  path.join(_sdk.sdkPath, 'bin', 'dartdevc'),
+                  path.join(Sdk.sdkPath, 'bin', 'dartdevc'),
                   <String>['--persistent_worker'],
                 ),
             maxWorkers: 1),
@@ -63,7 +64,8 @@ class Compiler {
     _logger.info('Temp directory created: ${temp.path}');
 
     try {
-      await copyPath(FlutterWebManager.dartTemplateProject.path, temp.path);
+      await copyPath(
+          FlutterWebManager.dartTemplateProject(_nullSafety).path, temp.path);
       await Directory(path.join(temp.path, 'lib')).create(recursive: true);
 
       final arguments = <String>[
@@ -71,6 +73,10 @@ class Compiler {
         '--terse',
         if (!returnSourceMap) '--no-source-maps',
         '--packages=${path.join('.dart_tool', 'package_config.json')}',
+        if (_nullSafety) ...[
+          '--sound-null-safety',
+          '--enable-experiment=non-nullable',
+        ],
         ...['-o', '$kMainDart.js'],
         path.join('lib', kMainDart),
       ];
@@ -82,7 +88,7 @@ class Compiler {
       final mainJs = File(path.join(temp.path, '$kMainDart.js'));
       final mainSourceMap = File(path.join(temp.path, '$kMainDart.js.map'));
 
-      final dart2JSPath = path.join(_sdk.sdkPath, 'bin', 'dart2js');
+      final dart2JSPath = path.join(Sdk.sdkPath, 'bin', 'dart2js');
       _logger.info('About to exec: $dart2JSPath ${arguments.join(' ')}');
 
       final result = await Process.run(dart2JSPath, arguments,
@@ -131,9 +137,11 @@ class Compiler {
       final usingFlutter = _flutterWebManager.usesFlutterWeb(imports);
       if (usingFlutter) {
         await copyPath(
-            FlutterWebManager.flutterTemplateProject.path, temp.path);
+            FlutterWebManager.flutterTemplateProject(_nullSafety).path,
+            temp.path);
       } else {
-        await copyPath(FlutterWebManager.dartTemplateProject.path, temp.path);
+        await copyPath(
+            FlutterWebManager.dartTemplateProject(_nullSafety).path, temp.path);
       }
 
       await Directory(path.join(temp.path, 'lib')).create(recursive: true);
@@ -150,12 +158,19 @@ class Compiler {
         '--modules=amd',
         if (usingFlutter) ...[
           '-s',
-          _flutterWebManager.summaryFilePath,
+          _flutterWebManager.summaryFilePath(_nullSafety),
           '-s',
-          '${_sdk.flutterBinPath}/cache/flutter_web_sdk/flutter_web_sdk/kernel/flutter_ddc_sdk.dill'
+          '${Sdk.flutterBinPath}/cache/flutter_web_sdk/flutter_web_sdk/kernel/' +
+              (_nullSafety
+                  ? 'flutter_ddc_sdk_sound.dill'
+                  : 'flutter_ddc_sdk.dill'),
         ],
         ...['-o', path.join(temp.path, '$kMainDart.js')],
         ...['--module-name', 'dartpad_main'],
+        if (_nullSafety) ...[
+          '--sound-null-safety',
+          '--enable-experiment=non-nullable',
+        ],
         bootstrapPath,
         '--packages=${path.join(temp.path, '.dart_tool', 'package_config.json')}',
       ];
@@ -184,7 +199,8 @@ class Compiler {
         final results = DDCCompilationResults(
           compiledJS: processedJs,
           modulesBaseUrl: 'https://storage.googleapis.com/'
-              'compilation_artifacts/${_sdk.versionFull}/',
+              '${_nullSafety ? 'nnbd_artifacts' : 'compilation_artifacts'}'
+              '/${_sdk.versionFull}/',
         );
         return results;
       }

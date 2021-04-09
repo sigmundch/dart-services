@@ -7,7 +7,7 @@ library services.grind;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:dart_services/src/sdk_manager.dart';
+import 'package:dart_services/src/sdk.dart';
 import 'package:grinder/grinder.dart';
 import 'package:grinder/grinder_files.dart';
 import 'package:grinder/src/run_utils.dart' show mergeWorkingDirectory;
@@ -21,9 +21,7 @@ Future<void> main(List<String> args) async {
 
 @Task('Make sure SDKs are appropriately initialized')
 @Depends(setupFlutterSdk)
-void sdkInit() async {
-  await SdkManager.sdk.init();
-}
+void sdkInit() {}
 
 @Task()
 void analyze() async {
@@ -47,30 +45,28 @@ Future<void> serve() async {
 
 @Task()
 @Depends(buildStorageArtifacts)
-Future<void> serveWithProxyTarget() async {
-  await runWithLogging(Platform.executable, arguments: [
-    'bin/server_dev.dart',
-    '--port',
-    '8082',
-    '--proxy-target',
-    'https://v1.api.dartpad.dev/'
-  ]);
+Future<void> serveNullSafety() async {
+  await runWithLogging(Platform.executable,
+      arguments: ['bin/server_dev.dart', '--port', '8084', '--null-safety']);
 }
 
-final _dockerVersionMatcher = RegExp(r'^FROM google/dart-runtime:(.*)$');
+const _dartImageName = 'google/dart';
+final _dockerVersionMatcher = RegExp('^FROM $_dartImageName:(.*)\$');
+const _dockerFileName = 'cloud_run.Dockerfile';
 
 @Task('Update the docker and SDK versions')
 void updateDockerVersion() {
   final platformVersion = Platform.version.split(' ').first;
-  final dockerImageLines = File('Dockerfile').readAsLinesSync().map((String s) {
+  final dockerFile = File(_dockerFileName);
+  final dockerImageLines = dockerFile.readAsLinesSync().map((String s) {
     if (s.contains(_dockerVersionMatcher)) {
-      return 'FROM google/dart-runtime:$platformVersion';
+      return 'FROM $_dartImageName:$platformVersion';
     }
     return s;
   }).toList();
   dockerImageLines.add('');
 
-  File('Dockerfile').writeAsStringSync(dockerImageLines.join('\n'));
+  dockerFile.writeAsStringSync(dockerImageLines.join('\n'));
 }
 
 final List<String> compilationArtifacts = [
@@ -82,12 +78,16 @@ final List<String> compilationArtifacts = [
     'google storage')
 @Depends(sdkInit)
 void validateStorageArtifacts() async {
-  final version = SdkManager.sdk.versionFull;
+  final version = Sdk().versionFull;
 
-  const urlBase = 'https://storage.googleapis.com/compilation_artifacts/';
+  const nullUnsafeUrlBase =
+      'https://storage.googleapis.com/compilation_artifacts/';
+  const nullSafeUrlBase = 'https://storage.googleapis.com/nnbd_artifacts/';
 
-  for (final artifact in compilationArtifacts) {
-    await _validateExists('$urlBase$version/$artifact');
+  for (final urlBase in [nullUnsafeUrlBase, nullSafeUrlBase]) {
+    for (final artifact in compilationArtifacts) {
+      await _validateExists('$urlBase$version/$artifact');
+    }
   }
 }
 
@@ -113,34 +113,36 @@ void buildProjectTemplates() async {
     await templatesPath.delete(recursive: true);
   }
 
-  final dartProjectPath =
-      Directory(path.join(templatesPath.path, 'dart_project'));
-  final dartProjectDir = await dartProjectPath.create(recursive: true);
-  joinFile(dartProjectDir, ['pubspec.yaml'])
-      .writeAsStringSync(createPubspec(includeFlutterWeb: false));
-  await _runDartPubGet(dartProjectDir);
-  joinFile(dartProjectDir, ['analysis_options.yaml'])
-      .writeAsStringSync(createDartAnalysisOptions());
+  for (final nullSafety in [true, false]) {
+    final dartProjectPath = Directory(path.join(templatesPath.path,
+        nullSafety ? 'null-safe' : 'null-unsafe', 'dart_project'));
+    final dartProjectDir = await dartProjectPath.create(recursive: true);
+    joinFile(dartProjectDir, ['pubspec.yaml']).writeAsStringSync(
+        createPubspec(includeFlutterWeb: false, nullSafety: nullSafety));
+    await _runDartPubGet(dartProjectDir);
+    joinFile(dartProjectDir, ['analysis_options.yaml'])
+        .writeAsStringSync(createDartAnalysisOptions());
 
-  final flutterProjectPath =
-      Directory(path.join(templatesPath.path, 'flutter_project'));
-  final flutterProjectDir = await flutterProjectPath.create(recursive: true);
-  joinFile(flutterProjectDir, ['pubspec.yaml'])
-      .writeAsStringSync(createPubspec(includeFlutterWeb: true));
-  await _runFlutterPubGet(flutterProjectDir);
-  // TODO(gspencergoog): Convert this to use the flutter recommended lints as
-  // soon as those are finalized (the current proposal is to leave the
-  // analysis_options_user.yaml file as-is and replace it with a package, to
-  // avoid massive breakage).
-  joinFile(flutterProjectDir, ['analysis_options.yaml']).writeAsStringSync(
-      'include: package:flutter/analysis_options_user.yaml\n');
+    final flutterProjectPath = Directory(path.join(templatesPath.path,
+        nullSafety ? 'null-safe' : 'null-unsafe', 'flutter_project'));
+    final flutterProjectDir = await flutterProjectPath.create(recursive: true);
+    joinFile(flutterProjectDir, ['pubspec.yaml']).writeAsStringSync(
+        createPubspec(includeFlutterWeb: true, nullSafety: nullSafety));
+    await _runFlutterPubGet(flutterProjectDir);
+    // TODO(gspencergoog): Convert this to use the flutter recommended lints as
+    // soon as those are finalized (the current proposal is to leave the
+    // analysis_options_user.yaml file as-is and replace it with a package, to
+    // avoid massive breakage).
+    joinFile(flutterProjectDir, ['analysis_options.yaml']).writeAsStringSync(
+        'include: package:flutter/analysis_options_user.yaml\n');
+  }
 }
 
 Future<void> _runDartPubGet(Directory dir) async {
   log('running dart pub get (${dir.path})');
 
   await runWithLogging(
-    path.join(SdkManager.sdk.sdkPath, 'bin', 'dart'),
+    path.join(Sdk.sdkPath, 'bin', 'dart'),
     arguments: ['pub', 'get'],
     workingDirectory: dir.path,
   );
@@ -150,7 +152,7 @@ Future<void> _runFlutterPubGet(Directory dir) async {
   log('running flutter pub get (${dir.path})');
 
   await runWithLogging(
-    path.join(SdkManager.sdk.flutterBinPath, 'flutter'),
+    path.join(Sdk.flutterBinPath, 'flutter'),
     arguments: ['pub', 'get'],
     workingDirectory: dir.path,
   );
@@ -159,23 +161,33 @@ Future<void> _runFlutterPubGet(Directory dir) async {
 @Task('build the sdk compilation artifacts for upload to google storage')
 @Depends(sdkInit, buildProjectTemplates)
 void buildStorageArtifacts() async {
-  // build and copy dart_sdk.js, flutter_web.js, and flutter_web.dill
-  final temp = Directory.systemTemp.createTempSync('flutter_web_sample');
+  delete(getDir('artifacts'));
+  final instructions = <String>[];
 
-  try {
-    await _buildStorageArtifacts(temp);
-  } finally {
-    temp.deleteSync(recursive: true);
+  for (final nullSafe in [false, true]) {
+    // build and copy dart_sdk.js, flutter_web.js, and flutter_web.dill
+    final temp = Directory.systemTemp.createTempSync('flutter_web_sample');
+
+    try {
+      instructions.add(await _buildStorageArtifacts(temp, nullSafe));
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  }
+  log('\nFrom the dart-services project root dir, run:');
+  for (final instruction in instructions) {
+    log(instruction);
   }
 }
 
-Future<void> _buildStorageArtifacts(Directory dir) async {
-  final pubspec = createPubspec(includeFlutterWeb: true);
+Future<String> _buildStorageArtifacts(Directory dir, bool nullSafety) async {
+  final pubspec =
+      createPubspec(includeFlutterWeb: true, nullSafety: nullSafety);
   joinFile(dir, ['pubspec.yaml']).writeAsStringSync(pubspec);
 
   // run flutter pub get
   await runWithLogging(
-    path.join(flutterSdkPath, 'bin', 'flutter'),
+    path.join(Sdk.flutterSdkPath, 'bin', 'flutter'),
     arguments: ['pub', 'get'],
     workingDirectory: dir.path,
   );
@@ -211,7 +223,7 @@ Future<void> _buildStorageArtifacts(Directory dir) async {
   // Make sure flutter-sdk/bin/cache/flutter_web_sdk/flutter_web_sdk/kernel/flutter_ddc_sdk.dill
   // is installed.
   await runWithLogging(
-    path.join(flutterSdkPath, 'bin', 'flutter'),
+    path.join(Sdk.flutterSdkPath, 'bin', 'flutter'),
     arguments: ['precache', '--web'],
     workingDirectory: dir.path,
   );
@@ -219,14 +231,25 @@ Future<void> _buildStorageArtifacts(Directory dir) async {
   // Build the artifacts using DDC:
   // dart-sdk/bin/dartdevc -s kernel/flutter_ddc_sdk.dill
   //     --modules=amd package:flutter/animation.dart ...
-  final compilerPath =
-      path.join(flutterSdkPath, 'bin', 'cache', 'dart-sdk', 'bin', 'dartdevc');
-  final dillPath = path.join(flutterSdkPath, 'bin', 'cache', 'flutter_web_sdk',
-      'flutter_web_sdk', 'kernel', 'flutter_ddc_sdk.dill');
+  final compilerPath = path.join(
+      Sdk.flutterSdkPath, 'bin', 'cache', 'dart-sdk', 'bin', 'dartdevc');
+  final dillPath = path.join(
+    Sdk.flutterSdkPath,
+    'bin',
+    'cache',
+    'flutter_web_sdk',
+    'flutter_web_sdk',
+    'kernel',
+    nullSafety ? 'flutter_ddc_sdk_sound.dill' : 'flutter_ddc_sdk.dill',
+  );
 
   final args = <String>[
     '-s',
     dillPath,
+    if (nullSafety) ...[
+      '--sound-null-safety',
+      '--enable-experiment=non-nullable'
+    ],
     '--modules=amd',
     '-o',
     'flutter_web.js',
@@ -240,22 +263,24 @@ Future<void> _buildStorageArtifacts(Directory dir) async {
   );
 
   // Copy both to the project directory.
-  final artifactsDir = getDir('artifacts');
-  delete(artifactsDir);
-  artifactsDir.createSync();
+  final artifactsDir =
+      getDir(path.join('artifacts', nullSafety ? 'null-safe' : 'null-unsafe'));
+  artifactsDir.createSync(recursive: true);
 
-  final sdkJsPath = path.join(flutterSdkPath,
-      'bin/cache/flutter_web_sdk/flutter_web_sdk/kernel/amd-canvaskit-html/dart_sdk.js');
+  final sdkJsPath = path.join(
+      Sdk.flutterSdkPath,
+      nullSafety
+          ? 'bin/cache/flutter_web_sdk/flutter_web_sdk/kernel/amd-canvaskit-html-sound/dart_sdk.js'
+          : 'bin/cache/flutter_web_sdk/flutter_web_sdk/kernel/amd-canvaskit-html/dart_sdk.js');
 
   copy(getFile(sdkJsPath), artifactsDir);
   copy(joinFile(dir, ['flutter_web.js']), artifactsDir);
   copy(joinFile(dir, ['flutter_web.dill']), artifactsDir);
 
   // Emit some good google storage upload instructions.
-  final version = SdkManager.sdk.versionFull;
-  log('\nFrom the dart-services project root dir, run:');
-  log('  gsutil -h "Cache-Control:public, max-age=86400" cp -z js '
-      'artifacts/*.js gs://compilation_artifacts/$version/');
+  final version = Sdk().versionFull;
+  return ('  gsutil -h "Cache-Control:public, max-age=86400" cp -z js ${artifactsDir.path}/*.js'
+      ' gs://${nullSafety ? 'nnbd_artifacts' : 'compilation_artifacts'}/$version/');
 }
 
 @Task('Reinitialize the Flutter submodule.')
@@ -268,7 +293,7 @@ void setupFlutterSdk() async {
 
   // Set up the  Flutter SDK the way dart-services needs it.
 
-  final flutterBinFlutter = path.join(flutterSdkPath, 'bin', 'flutter');
+  final flutterBinFlutter = path.join(Sdk.flutterSdkPath, 'bin', 'flutter');
   await runWithLogging(
     flutterBinFlutter,
     arguments: ['doctor'],
@@ -303,7 +328,7 @@ void fuzz() {
 @Depends(sdkInit, updateDockerVersion, generateProtos, analyze, test, fuzz,
     validateStorageArtifacts)
 void deploy() {
-  log('Run: gcloud app deploy --project=dart-services --no-promote');
+  log('Deploy via Google Cloud Console');
 }
 
 @Task()
@@ -315,6 +340,9 @@ void generateProtos() async {
   await runWithLogging(
     'protoc',
     arguments: ['--dart_out=lib/src', 'protos/dart_services.proto'],
+    onErrorMessage:
+        'Error running "protoc"; make sure the Protocol Buffer compiler is '
+        'installed (see README.md)',
   );
 
   // reformat generated classes so travis dart format test doesn't fail
@@ -336,16 +364,25 @@ void generateProtos() async {
 Future<void> runWithLogging(String executable,
     {List<String> arguments = const [],
     RunOptions runOptions,
-    String workingDirectory}) async {
+    String workingDirectory,
+    String onErrorMessage}) async {
   runOptions = mergeWorkingDirectory(workingDirectory, runOptions);
   log("$executable ${arguments.join(' ')}");
   runOptions ??= RunOptions();
 
-  final proc = await Process.start(executable, arguments,
-      workingDirectory: runOptions.workingDirectory,
-      environment: runOptions.environment,
-      includeParentEnvironment: runOptions.includeParentEnvironment,
-      runInShell: runOptions.runInShell);
+  Process proc;
+  try {
+    proc = await Process.start(executable, arguments,
+        workingDirectory: runOptions.workingDirectory,
+        environment: runOptions.environment,
+        includeParentEnvironment: runOptions.includeParentEnvironment,
+        runInShell: runOptions.runInShell);
+  } catch (e) {
+    if (onErrorMessage != null) {
+      print(onErrorMessage);
+    }
+    rethrow;
+  }
 
   proc.stdout.listen((out) => log(runOptions.stdoutEncoding.decode(out)));
   proc.stderr.listen((err) => log(runOptions.stdoutEncoding.decode(err)));
@@ -358,12 +395,15 @@ Future<void> runWithLogging(String executable,
 
 const String _samplePackageName = 'dartpad_sample';
 
-String createPubspec({@required bool includeFlutterWeb}) {
+String createPubspec({
+  @required bool includeFlutterWeb,
+  @required bool nullSafety,
+}) {
   // Mark the samples as not null safe.
   var content = '''
 name: $_samplePackageName
 environment:
-  sdk: '>=2.10.0 <3.0.0'
+  sdk: '>=${nullSafety ? '2.12.0' : '2.10.0'} <3.0.0'
 ''';
 
   if (includeFlutterWeb) {
