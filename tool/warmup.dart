@@ -8,7 +8,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
-const BASE_PATH = '/api/dartservices/v2/';
+const basePath = '/api/dartservices/v2/';
 
 const count = 200;
 
@@ -37,13 +37,13 @@ final flutterPayload = convert.json.encode(flutterData);
 final flutterCompileDDCPayload = convert.json.encode(flutterCompileDDCData);
 final flutterDocPayload = convert.json.encode(flutterDocData);
 
-String uri;
+late String uri;
 
 Future<void> main(List<String> args) async {
   String appHost;
 
   if (args.isNotEmpty) {
-    appHost = '${args[0]}';
+    appHost = args[0];
   } else {
     print('''Pass the fully qualified dart-services hostname (no protocol, no
 path) as the first argument when invoking this script.
@@ -59,7 +59,7 @@ dart warmup.dart 20200124t152413-dot-dart-services-0.appspot.com
   if (!appHost.startsWith('http://') && !appHost.startsWith('https://')) {
     appHost = 'http://$appHost';
   }
-  uri = '$appHost$BASE_PATH';
+  uri = '$appHost$basePath';
 
   print('Target URI\n$uri');
 

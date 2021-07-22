@@ -13,7 +13,7 @@ import 'package:logging/logging.dart';
 import 'package:path/path.dart' as path;
 
 import 'common.dart';
-import 'flutter_web.dart';
+import 'project.dart' as project;
 import 'pub.dart';
 import 'sdk.dart';
 
@@ -23,7 +23,6 @@ Logger _logger = Logger('compiler');
 /// compile at a time.
 class Compiler {
   final Sdk _sdk;
-  final FlutterWebManager _flutterWebManager;
   final String _dartdevcPath;
   final BazelWorkerDriver _ddcDriver;
   final bool _nullSafety;
@@ -35,8 +34,7 @@ class Compiler {
                   path.join(Sdk.sdkPath, 'bin', 'dartdevc'),
                   <String>['--persistent_worker'],
                 ),
-            maxWorkers: 1),
-        _flutterWebManager = FlutterWebManager();
+            maxWorkers: 1);
 
   Future<CompilationResults> warmup({bool useHtml = false}) async {
     return compile(useHtml ? sampleCodeWeb : sampleCode);
@@ -48,8 +46,7 @@ class Compiler {
     bool returnSourceMap = false,
   }) async {
     final imports = getAllImportsFor(input);
-    final unsupportedImports =
-        _flutterWebManager.getUnsupportedImports(imports);
+    final unsupportedImports = project.getUnsupportedImports(imports);
     if (unsupportedImports.isNotEmpty) {
       return CompilationResults(problems: [
         for (var import in unsupportedImports)
@@ -61,8 +58,7 @@ class Compiler {
     _logger.info('Temp directory created: ${temp.path}');
 
     try {
-      await copyPath(
-          FlutterWebManager.dartTemplateProject(_nullSafety).path, temp.path);
+      await copyPath(project.dartTemplateProject(_nullSafety).path, temp.path);
       await Directory(path.join(temp.path, 'lib')).create(recursive: true);
 
       final arguments = <String>[
@@ -72,7 +68,6 @@ class Compiler {
         '--packages=${path.join('.dart_tool', 'package_config.json')}',
         if (_nullSafety) ...[
           '--sound-null-safety',
-          '--enable-experiment=non-nullable',
         ],
         ...['-o', '$kMainDart.js'],
         path.join('lib', kMainDart),
@@ -97,7 +92,7 @@ class Compiler {
         ]);
         return results;
       } else {
-        String sourceMap;
+        String? sourceMap;
         if (returnSourceMap && await mainSourceMap.exists()) {
           sourceMap = await mainSourceMap.readAsString();
         }
@@ -119,8 +114,7 @@ class Compiler {
   /// Compile the given string and return the resulting [DDCCompilationResults].
   Future<DDCCompilationResults> compileDDC(String input) async {
     final imports = getAllImportsFor(input);
-    final unsupportedImports =
-        _flutterWebManager.getUnsupportedImports(imports);
+    final unsupportedImports = project.getUnsupportedImports(imports);
     if (unsupportedImports.isNotEmpty) {
       return DDCCompilationResults.failed([
         for (var import in unsupportedImports)
@@ -132,14 +126,13 @@ class Compiler {
     _logger.info('Temp directory created: ${temp.path}');
 
     try {
-      final usingFlutter = _flutterWebManager.usesFlutterWeb(imports);
+      final usingFlutter = project.usesFlutterWeb(imports);
       if (usingFlutter) {
         await copyPath(
-            FlutterWebManager.flutterTemplateProject(_nullSafety).path,
-            temp.path);
+            project.flutterTemplateProject(_nullSafety).path, temp.path);
       } else {
         await copyPath(
-            FlutterWebManager.dartTemplateProject(_nullSafety).path, temp.path);
+            project.dartTemplateProject(_nullSafety).path, temp.path);
       }
 
       await Directory(path.join(temp.path, 'lib')).create(recursive: true);
@@ -156,7 +149,7 @@ class Compiler {
         '--modules=amd',
         if (usingFlutter) ...[
           '-s',
-          _flutterWebManager.summaryFilePath(_nullSafety),
+          project.summaryFilePath(_nullSafety),
           '-s',
           '${Sdk.flutterBinPath}/cache/flutter_web_sdk/flutter_web_sdk/kernel/' +
               (_nullSafety
@@ -167,7 +160,6 @@ class Compiler {
         ...['--module-name', 'dartpad_main'],
         if (_nullSafety) ...[
           '--sound-null-safety',
-          '--enable-experiment=non-nullable',
         ],
         bootstrapPath,
         '--packages=${path.join(temp.path, '.dart_tool', 'package_config.json')}',
@@ -218,8 +210,8 @@ class Compiler {
 
 /// The result of a dart2js compile.
 class CompilationResults {
-  final String compiledJS;
-  final String sourceMap;
+  final String? compiledJS;
+  final String? sourceMap;
   final List<CompilationProblem> problems;
 
   CompilationResults({
@@ -228,7 +220,7 @@ class CompilationResults {
     this.sourceMap,
   });
 
-  bool get hasOutput => compiledJS != null && compiledJS.isNotEmpty;
+  bool get hasOutput => compiledJS != null && compiledJS!.isNotEmpty;
 
   /// This is true if there were no errors.
   bool get success => problems.isEmpty;
@@ -241,8 +233,8 @@ class CompilationResults {
 
 /// The result of a DDC compile.
 class DDCCompilationResults {
-  final String compiledJS;
-  final String modulesBaseUrl;
+  final String? compiledJS;
+  final String? modulesBaseUrl;
   final List<CompilationProblem> problems;
 
   DDCCompilationResults({this.compiledJS, this.modulesBaseUrl})
@@ -252,7 +244,7 @@ class DDCCompilationResults {
       : compiledJS = null,
         modulesBaseUrl = null;
 
-  bool get hasOutput => compiledJS != null && compiledJS.isNotEmpty;
+  bool get hasOutput => compiledJS != null && compiledJS!.isNotEmpty;
 
   /// This is true if there were no errors.
   bool get success => problems.isEmpty;
@@ -285,7 +277,7 @@ class CompilationProblem implements Comparable<CompilationProblem> {
 /// * If [from] and [to] are canonically the same, no operation occurs.
 ///
 /// Returns a future that completes when complete.
-Future<Null> copyPath(String from, String to) async {
+Future<void> copyPath(String from, String to) async {
   if (_doNothing(from, to)) {
     return;
   }

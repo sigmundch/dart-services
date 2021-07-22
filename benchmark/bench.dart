@@ -6,7 +6,6 @@ library services.bench;
 
 import 'dart:async';
 
-import 'package:analysis_server_lib/analysis_server_lib.dart';
 import 'package:dart_services/src/analysis_server.dart';
 import 'package:dart_services/src/bench.dart';
 import 'package:dart_services/src/common.dart';
@@ -20,7 +19,7 @@ const nullSafe = false;
 void main(List<String> args) async {
   final json = args.contains('--json');
   final harness = BenchmarkHarness(asJson: json);
-  final compiler = Compiler(Sdk(), nullSafe);
+  final compiler = Compiler(Sdk.create(), nullSafe);
 
   Logger.root.level = Level.WARNING;
   Logger.root.onRecord.listen((LogRecord record) {
@@ -53,17 +52,16 @@ void main(List<String> args) async {
 
 class AnalyzerBenchmark extends Benchmark {
   final String source;
-  AnalysisServerWrapper analysisServer;
+  final AnalysisServerWrapper analysisServer;
 
   AnalyzerBenchmark(
     String name,
     this.source,
-  ) : super('analyzer.$name') {
-    analysisServer = DartAnalysisServerWrapper(nullSafe);
-  }
+  )   : analysisServer = DartAnalysisServerWrapper(nullSafe),
+        super('analyzer.$name');
 
   @override
-  Future<AnalysisServer> init() => analysisServer.init();
+  Future<void> init() => analysisServer.init();
 
   @override
   Future<proto.AnalysisResults> perform() => analysisServer.analyze(source);
@@ -111,7 +109,7 @@ class AnalysisServerBenchmark extends Benchmark {
         super('completion.$name');
 
   @override
-  Future<AnalysisServer> init() => analysisServer.init();
+  Future<void> init() => analysisServer.init();
 
   @override
   Future<proto.CompleteResponse> perform() =>
