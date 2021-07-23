@@ -8,14 +8,13 @@ import 'dart:async';
 import 'dart:convert' show jsonDecode, JsonEncoder;
 import 'dart:io';
 
+import 'package:dart_services/src/project.dart';
+import 'package:dart_services/src/pub.dart';
 import 'package:dart_services/src/sdk.dart';
 import 'package:grinder/grinder.dart';
-import 'package:grinder/grinder_files.dart';
 import 'package:grinder/src/run_utils.dart' show mergeWorkingDirectory;
 import 'package:http/http.dart' as http;
-import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
-import 'package:yaml/yaml.dart';
 
 Future<void> main(List<String> args) async {
   return grind(args);
@@ -26,17 +25,19 @@ Future<void> main(List<String> args) async {
 void sdkInit() {}
 
 @Task()
+@Depends(buildProjectTemplates)
 void analyze() async {
   await runWithLogging('dart', arguments: ['analyze']);
 }
 
 @Task()
 @Depends(buildStorageArtifacts)
-Future<dynamic> test() => TestRunner().testAsync();
+Future<dynamic> test() =>
+    runWithLogging(Platform.executable, arguments: ['test']);
 
 @DefaultTask()
 @Depends(analyze, test)
-void analyzeTest() => null;
+void analyzeTest() {}
 
 @Task()
 @Depends(buildStorageArtifacts)
@@ -54,21 +55,26 @@ Future<void> serveNullSafety() async {
 
 const _dartImageName = 'google/dart';
 final _dockerVersionMatcher = RegExp('^FROM $_dartImageName:(.*)\$');
-const _dockerFileName = 'cloud_run.Dockerfile';
+const _dockerFileNames = [
+  'cloud_run.Dockerfile',
+  'cloud_run_null_safety.Dockerfile'
+];
 
 @Task('Update the docker and SDK versions')
 void updateDockerVersion() {
   final platformVersion = Platform.version.split(' ').first;
-  final dockerFile = File(_dockerFileName);
-  final dockerImageLines = dockerFile.readAsLinesSync().map((String s) {
-    if (s.contains(_dockerVersionMatcher)) {
-      return 'FROM $_dartImageName:$platformVersion';
-    }
-    return s;
-  }).toList();
-  dockerImageLines.add('');
+  for (final _dockerFileName in _dockerFileNames) {
+    final dockerFile = File(_dockerFileName);
+    final dockerImageLines = dockerFile.readAsLinesSync().map((String s) {
+      if (s.contains(_dockerVersionMatcher)) {
+        return 'FROM $_dartImageName:$platformVersion';
+      }
+      return s;
+    }).toList();
+    dockerImageLines.add('');
 
-  dockerFile.writeAsStringSync(dockerImageLines.join('\n'));
+    dockerFile.writeAsStringSync(dockerImageLines.join('\n'));
+  }
 }
 
 final List<String> compilationArtifacts = [
@@ -80,7 +86,7 @@ final List<String> compilationArtifacts = [
     'google storage')
 @Depends(sdkInit)
 void validateStorageArtifacts() async {
-  final version = Sdk().versionFull;
+  final version = Sdk.create().versionFull;
 
   const nullUnsafeUrlBase =
       'https://storage.googleapis.com/compilation_artifacts/';
@@ -88,12 +94,12 @@ void validateStorageArtifacts() async {
 
   for (final urlBase in [nullUnsafeUrlBase, nullSafeUrlBase]) {
     for (final artifact in compilationArtifacts) {
-      await _validateExists('$urlBase$version/$artifact');
+      await _validateExists(Uri.parse('$urlBase$version/$artifact'));
     }
   }
 }
 
-Future<void> _validateExists(String url) async {
+Future<void> _validateExists(Uri url) async {
   log('checking $url...');
 
   final response = await http.head(url);
@@ -106,7 +112,7 @@ Future<void> _validateExists(String url) async {
 }
 
 @Task('build the project templates')
-@Depends(sdkInit)
+@Depends(sdkInit, updatePubDependencies)
 void buildProjectTemplates() async {
   final templatesPath =
       Directory(path.join(Directory.current.path, 'project_templates'));
@@ -119,8 +125,12 @@ void buildProjectTemplates() async {
     final dartProjectPath = Directory(path.join(templatesPath.path,
         nullSafety ? 'null-safe' : 'null-unsafe', 'dart_project'));
     final dartProjectDir = await dartProjectPath.create(recursive: true);
-    joinFile(dartProjectDir, ['pubspec.yaml']).writeAsStringSync(
-        createPubspec(includeFlutterWeb: false, nullSafety: nullSafety));
+    final dependencies = _parsePubDependenciesFile(nullSafety: nullSafety)
+      ..removeWhere((name, _) => !supportedNonFlutterPackages.contains(name));
+    joinFile(dartProjectDir, ['pubspec.yaml']).writeAsStringSync(createPubspec(
+        includeFlutterWeb: false,
+        nullSafety: nullSafety,
+        dependencies: dependencies));
     await _runDartPubGet(dartProjectDir);
     joinFile(dartProjectDir, ['analysis_options.yaml'])
         .writeAsStringSync(createDartAnalysisOptions());
@@ -286,8 +296,8 @@ Future<String> _buildStorageArtifacts(Directory dir, bool nullSafety) async {
   copy(joinFile(dir, ['flutter_web.dill']), artifactsDir);
 
   // Emit some good google storage upload instructions.
-  final version = Sdk().versionFull;
-  return ('  gsutil -h "Cache-Control:public, max-age=86400" cp -z js ${artifactsDir.path}/*.js'
+  final version = Sdk.create().versionFull;
+  return ('  gsutil -h "Cache-Control: public, max-age=604800, immutable" cp -z js ${artifactsDir.path}/*.js'
       ' gs://${nullSafety ? 'nnbd_artifacts' : 'compilation_artifacts'}/$version/');
 }
 
@@ -333,15 +343,15 @@ void fuzz() {
 }
 
 @Task('Update generated files and run all checks prior to deployment')
-@Depends(sdkInit, updateDockerVersion, generateProtos, analyze, test, fuzz,
-    validateStorageArtifacts)
+@Depends(sdkInit, updateDockerVersion, generateProtos, updatePubDependencies,
+    analyze, test, validateStorageArtifacts)
 void deploy() {
   log('Deploy via Google Cloud Console');
 }
 
 @Task()
 @Depends(generateProtos, analyze, fuzz, buildStorageArtifacts)
-void buildbot() => null;
+void buildbot() {}
 
 @Task('Generate Protobuf classes')
 void generateProtos() async {
@@ -371,12 +381,11 @@ void generateProtos() async {
 
 Future<void> runWithLogging(String executable,
     {List<String> arguments = const [],
-    RunOptions runOptions,
-    String workingDirectory,
-    String onErrorMessage}) async {
+    RunOptions? runOptions,
+    String? workingDirectory,
+    String? onErrorMessage}) async {
   runOptions = mergeWorkingDirectory(workingDirectory, runOptions);
   log("$executable ${arguments.join(' ')}");
-  runOptions ??= RunOptions();
 
   Process proc;
   try {
@@ -392,8 +401,8 @@ Future<void> runWithLogging(String executable,
     rethrow;
   }
 
-  proc.stdout.listen((out) => log(runOptions.stdoutEncoding.decode(out)));
-  proc.stderr.listen((err) => log(runOptions.stdoutEncoding.decode(err)));
+  proc.stdout.listen((out) => log(runOptions!.stdoutEncoding.decode(out)));
+  proc.stderr.listen((err) => log(runOptions!.stdoutEncoding.decode(err)));
   final exitCode = await proc.exitCode;
 
   if (exitCode != 0) {
@@ -403,14 +412,15 @@ Future<void> runWithLogging(String executable,
 
 const String _samplePackageName = 'dartpad_sample';
 
-String createPubspec(
-    {@required bool includeFlutterWeb,
-    @required bool nullSafety,
-    Map<String, String> dependencies = const {}}) {
+String createPubspec({
+  required bool includeFlutterWeb,
+  required bool nullSafety,
+  Map<String, String> dependencies = const {},
+}) {
   var content = '''
 name: $_samplePackageName
 environment:
-  sdk: '>=${nullSafety ? '2.12.0' : '2.10.0'} <3.0.0'
+  sdk: '>=${nullSafety ? '2.13.0' : '2.10.0'} <3.0.0'
 dependencies:
 ''';
 
@@ -421,10 +431,10 @@ dependencies:
   flutter_test:
     sdk: flutter
 ''';
-    dependencies.forEach((name, version) {
-      content += '  $name: $version\n';
-    });
   }
+  dependencies.forEach((name, version) {
+    content += '  $name: $version\n';
+  });
 
   return content;
 }
@@ -470,7 +480,7 @@ linter:
 @Depends(sdkInit)
 void updatePubDependencies() async {
   for (final nullSafety in [false, true]) {
-    await updateDependenciesFile(nullSafety: nullSafety);
+    updateDependenciesFile(nullSafety: nullSafety);
   }
 }
 
@@ -482,7 +492,7 @@ void updatePubDependencies() async {
 ///
 /// See [_pubDependenciesFile] for the location of the dependencies files.
 void updateDependenciesFile({
-  @required bool nullSafety,
+  required bool nullSafety,
 }) async {
   final tempDir = Directory.systemTemp.createTempSync('pubspec-scratch');
   final pubspec = createPubspec(
@@ -498,39 +508,12 @@ void updateDependenciesFile({
       'firebase_core': 'any',
       'firebase_messaging': 'any',
       'firebase_storage': 'any',
+      'pedantic': 'any',
     },
   );
   joinFile(tempDir, ['pubspec.yaml']).writeAsStringSync(pubspec);
   await _runFlutterPubGet(tempDir);
-  final pubspecLock =
-      loadYamlDocument(joinFile(tempDir, ['pubspec.lock']).readAsStringSync());
-  final pubSpecLockContents = pubspecLock.contents as YamlMap;
-  final packages = pubSpecLockContents['packages'] as YamlMap;
-  final packageVersions = <String, String>{};
-  const flutterPackages = [
-    'flutter',
-    'flutter_test',
-    'flutter_web_plugins',
-    'sky_engine',
-  ];
-
-  packages.forEach((name_, package_) {
-    final name = name_ as String;
-    if (flutterPackages.contains(name)) {
-      return;
-    }
-    final package = package_ as YamlMap;
-    final source = package['source'];
-    if (source is! String || source != 'hosted') {
-      fail('$name is not hosted: "$source" (${source.runtimeType})');
-    }
-    final version = package['version'];
-    if (version is String) {
-      packageVersions[name] = version;
-    } else {
-      fail('$name does not have a well-formatted version: $version');
-    }
-  });
+  final packageVersions = packageVersionsFromPubspecLock(tempDir);
 
   _pubDependenciesFile(nullSafety: nullSafety)
       .writeAsStringSync(_jsonEncoder.convert(packageVersions));
@@ -543,14 +526,14 @@ const JsonEncoder _jsonEncoder = JsonEncoder.withIndent('  ');
 ///
 /// The null safe file is at `tool/pub_dependencies_null-safe.json`. The null
 /// unsafe file is at `tool/pub_dependencies_null-unsafe.json`.
-File _pubDependenciesFile({@required bool nullSafety}) {
+File _pubDependenciesFile({required bool nullSafety}) {
   final versionsFileName =
       'pub_dependencies_${nullSafety ? 'null-safe' : 'null-unsafe'}.json';
   return File(path.join(Directory.current.path, 'tool', versionsFileName));
 }
 
 /// Parses [_pubDependenciesFile] as a JSON Map of Strings.
-Map<String, String> _parsePubDependenciesFile({@required bool nullSafety}) {
+Map<String, String> _parsePubDependenciesFile({required bool nullSafety}) {
   final packageVersions = jsonDecode(
       _pubDependenciesFile(nullSafety: nullSafety).readAsStringSync()) as Map;
   return packageVersions.cast<String, String>();
