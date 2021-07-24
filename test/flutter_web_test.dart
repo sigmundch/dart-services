@@ -5,7 +5,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dart_services/src/flutter_web.dart';
+import 'package:analyzer/dart/ast/ast.dart';
+import 'package:dart_services/src/project.dart' as project;
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
@@ -14,57 +15,70 @@ void main() => defineTests();
 void defineTests() {
   for (final nullSafety in [false, true]) {
     group('Null ${nullSafety ? 'Safe' : 'Unsafe'} FlutterWebManager', () {
-      FlutterWebManager flutterWebManager;
-
-      setUp(() async {
-        flutterWebManager = FlutterWebManager();
-      });
+      final dartHtmlImport = _FakeImportDirective('dart:html');
+      final dartUiImport = _FakeImportDirective('dart:ui');
+      final packageFlutterImport = _FakeImportDirective('package:flutter/');
 
       test('inited', () async {
         expect(
-            await FlutterWebManager.flutterTemplateProject(nullSafety).exists(),
-            isTrue);
+            await project.flutterTemplateProject(nullSafety).exists(), isTrue);
         final file = File(path.join(
-            FlutterWebManager.flutterTemplateProject(nullSafety).path,
+            project.flutterTemplateProject(nullSafety).path,
             '.dart_tool',
             'package_config.json'));
         expect(await file.exists(), isTrue);
       });
 
       test('usesFlutterWeb', () {
-        expect(flutterWebManager.usesFlutterWeb({''}), isFalse);
-        expect(flutterWebManager.usesFlutterWeb({'dart:html'}), isFalse);
-        expect(flutterWebManager.usesFlutterWeb({'dart:ui'}), isTrue);
-        expect(flutterWebManager.usesFlutterWeb({'package:flutter'}), isTrue);
-        expect(flutterWebManager.usesFlutterWeb({'package:flutter/'}), isTrue);
+        expect(project.usesFlutterWeb({_FakeImportDirective('')}), isFalse);
+        expect(project.usesFlutterWeb({dartHtmlImport}), isFalse);
+        expect(project.usesFlutterWeb({dartUiImport}), isTrue);
+        expect(project.usesFlutterWeb({packageFlutterImport}), isTrue);
       });
 
-      test('getUnsupportedImport', () {
-        expect(flutterWebManager.getUnsupportedImport({'dart:html'}), isNull);
-        expect(flutterWebManager.getUnsupportedImport({'dart:ui'}), isNull);
-        expect(flutterWebManager.getUnsupportedImport({'package:flutter/'}),
-            isNull);
-        expect(flutterWebManager.getUnsupportedImport({'package:path'}),
-            equals('package:path'));
-        expect(flutterWebManager.getUnsupportedImport({'foo.dart'}),
-            equals('foo.dart'));
-        // dart:io is an unsupported package
-        expect(flutterWebManager.getUnsupportedImport({'dart:io'}),
-            equals('dart:io'));
+      test('getUnsupportedImport allows dart:html', () {
+        expect(
+            project.getUnsupportedImports([_FakeImportDirective('dart:html')]),
+            isEmpty);
+      });
+
+      test('getUnsupportedImport allows dart:ui', () {
+        expect(project.getUnsupportedImports([dartUiImport]), isEmpty);
+      });
+
+      test('getUnsupportedImport allows package:flutter', () {
+        expect(project.getUnsupportedImports([packageFlutterImport]), isEmpty);
+      });
+
+      test('getUnsupportedImport allows package:path', () {
+        final packagePathImport = _FakeImportDirective('package:path');
+        expect(project.getUnsupportedImports([packagePathImport]), isEmpty);
+      });
+
+      test('getUnsupportedImport does now allow package:unsupported', () {
+        final usupportedPackageImport =
+            _FakeImportDirective('package:unsupported');
+        expect(project.getUnsupportedImports([usupportedPackageImport]),
+            contains(usupportedPackageImport));
+      });
+
+      test('getUnsupportedImport does now allow local imports', () {
+        final localFooImport = _FakeImportDirective('foo.dart');
+        expect(project.getUnsupportedImports([localFooImport]),
+            contains(localFooImport));
+      });
+
+      test('getUnsupportedImport does not allow VM-only imports', () {
+        final dartIoImport = _FakeImportDirective('dart:io');
+        expect(project.getUnsupportedImports([dartIoImport]),
+            contains(dartIoImport));
       });
     });
 
-    group('Null ${nullSafety ? 'Safe' : 'Unsafe'} FlutterWebManager inited',
-        () {
-      FlutterWebManager flutterWebManager;
-
-      setUpAll(() async {
-        flutterWebManager = FlutterWebManager();
-      });
-
+    group('Null ${nullSafety ? 'Safe' : 'Unsafe'} project inited', () {
       test('packagesFilePath', () async {
         final packageConfig = File(path.join(
-            FlutterWebManager.flutterTemplateProject(nullSafety).path,
+            project.flutterTemplateProject(nullSafety).path,
             '.dart_tool',
             'package_config.json'));
         expect(await packageConfig.exists(), true);
@@ -77,7 +91,7 @@ void defineTests() {
       });
 
       test('summaryFilePath', () {
-        final summaryFilePath = flutterWebManager.summaryFilePath(nullSafety);
+        final summaryFilePath = project.summaryFilePath(nullSafety);
         expect(summaryFilePath, isNotEmpty);
 
         final file = File(summaryFilePath);
@@ -85,4 +99,24 @@ void defineTests() {
       });
     });
   }
+}
+
+class _FakeImportDirective implements ImportDirective {
+  @override
+  final _FakeStringLiteral uri;
+
+  _FakeImportDirective(String uri) : uri = _FakeStringLiteral(uri);
+
+  @override
+  dynamic noSuchMethod(_) => throw UnimplementedError();
+}
+
+class _FakeStringLiteral implements StringLiteral {
+  @override
+  final String stringValue;
+
+  _FakeStringLiteral(this.stringValue);
+
+  @override
+  dynamic noSuchMethod(_) => throw UnimplementedError();
 }

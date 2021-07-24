@@ -7,13 +7,13 @@ library services.common_server_api_protobuf_test;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:angel3_mock_request/angel3_mock_request.dart';
 import 'package:dart_services/src/common.dart';
-import 'package:dart_services/src/common_server_impl.dart';
 import 'package:dart_services/src/common_server_api.dart';
-import 'package:dart_services/src/server_cache.dart';
+import 'package:dart_services/src/common_server_impl.dart';
 import 'package:dart_services/src/protos/dart_services.pb.dart' as proto;
+import 'package:dart_services/src/server_cache.dart';
 import 'package:logging/logging.dart';
-import 'package:mock_request/mock_request.dart';
 import 'package:protobuf/protobuf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:test/test.dart';
@@ -54,8 +54,8 @@ main() {
 void main() => defineTests();
 
 void defineTests() {
-  CommonServerApi commonServerApi;
-  CommonServerImpl commonServerImpl;
+  CommonServerApi? commonServerApi;
+  late CommonServerImpl commonServerImpl;
 
   MockContainer container;
   MockCache cache;
@@ -67,10 +67,10 @@ void defineTests() {
     assert(commonServerApi != null);
     final uri = Uri.parse('/api/$path');
     final request = MockHttpRequest('POST', uri);
-    request.headers.add('content-type', JSON_CONTENT_TYPE);
+    request.headers.add('content-type', jsonContentType);
     request.add(utf8.encode(json.encode(message.toProto3Json())));
     await request.close();
-    await shelf_io.handleRequest(request, commonServerApi.router);
+    await shelf_io.handleRequest(request, commonServerApi!.router);
     return request.response;
   }
 
@@ -80,9 +80,9 @@ void defineTests() {
     assert(commonServerApi != null);
     final uri = Uri.parse('/api/$path');
     final request = MockHttpRequest('POST', uri);
-    request.headers.add('content-type', JSON_CONTENT_TYPE);
+    request.headers.add('content-type', jsonContentType);
     await request.close();
-    await shelf_io.handleRequest(request, commonServerApi.router);
+    await shelf_io.handleRequest(request, commonServerApi!.router);
     return request.response;
   }
 
@@ -406,10 +406,10 @@ class MockContainer implements ServerContainer {
 
 class MockCache implements ServerCache {
   @override
-  Future<String> get(String key) => Future.value(null);
+  Future<String?> get(String key) => Future.value(null);
 
   @override
-  Future<void> set(String key, String value, {Duration expiration}) =>
+  Future<void> set(String key, String value, {Duration? expiration}) =>
       Future.value();
 
   @override

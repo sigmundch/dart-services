@@ -16,9 +16,9 @@ import 'package:dart_services/src/analysis_server.dart' as analysis_server;
 import 'package:dart_services/src/common.dart';
 import 'package:dart_services/src/common_server_impl.dart';
 import 'package:dart_services/src/compiler.dart' as comp;
+import 'package:dart_services/src/protos/dart_services.pb.dart' as proto;
 import 'package:dart_services/src/sdk.dart';
 import 'package:dart_services/src/server_cache.dart';
-import 'package:dart_services/src/protos/dart_services.pb.dart' as proto;
 
 bool serverBasedCall = false;
 bool verbose = false;
@@ -26,12 +26,12 @@ bool dumpSrc = false;
 bool dumpPerf = false;
 bool dumpDelta = false;
 
-CommonServerImpl commonServerImpl;
-MockContainer container;
-MockCache cache;
-analysis_server.AnalysisServerWrapper analysisServer;
+late CommonServerImpl commonServerImpl;
+late MockContainer container;
+late MockCache cache;
+analysis_server.AnalysisServerWrapper? analysisServer;
 
-comp.Compiler compiler;
+late comp.Compiler compiler;
 
 var random = Random(0);
 var maxMutations = 2;
@@ -39,8 +39,8 @@ var iterations = 5;
 String commandToRun = 'ALL';
 bool dumpServerComms = false;
 
-OperationType lastExecuted;
-int lastOffset;
+late OperationType lastExecuted;
+int? lastOffset;
 
 Future<void> main(List<String> args) async {
   if (args.isEmpty) {
@@ -98,7 +98,7 @@ Usage: slow_test path_to_test_collection
 
       random = Random(seed);
       seed++;
-      await testPath(fse.path, analysisServer, compiler);
+      await testPath(fse.path, analysisServer!, compiler);
     } catch (e) {
       print(e);
       print('FAILED: ${fse.path}');
@@ -110,7 +110,7 @@ Usage: slow_test path_to_test_collection
 
   print('Shutting down');
 
-  await analysisServer.shutdown();
+  await analysisServer!.shutdown();
   await commonServerImpl.shutdown();
 }
 
@@ -127,13 +127,13 @@ Future<void> setupTools(String sdkPath) async {
   await commonServerImpl.init();
 
   analysisServer = analysis_server.DartAnalysisServerWrapper(false);
-  await analysisServer.init();
+  await analysisServer!.init();
 
   print('Warming up analysis server');
-  await analysisServer.warmup();
+  await analysisServer!.warmup();
 
   print('Warming up compiler');
-  compiler = comp.Compiler(Sdk(), false);
+  compiler = comp.Compiler(Sdk.create(), false);
   await compiler.warmup();
   print('SetupTools done');
 }
@@ -227,7 +227,7 @@ Future<void> testPath(
 
 Future<num> testAnalysis(
     String src, analysis_server.AnalysisServerWrapper analysisServer) async {
-  lastExecuted = OperationType.Analysis;
+  lastExecuted = OperationType.analysis;
   final sw = Stopwatch()..start();
 
   lastOffset = null;
@@ -246,7 +246,7 @@ Future<num> testAnalysis(
 }
 
 Future<num> testCompilation(String src, comp.Compiler compiler) async {
-  lastExecuted = OperationType.Compilation;
+  lastExecuted = OperationType.compilation;
   final sw = Stopwatch()..start();
 
   lastOffset = null;
@@ -264,7 +264,7 @@ Future<num> testCompilation(String src, comp.Compiler compiler) async {
 
 Future<num> testDocument(
     String src, analysis_server.AnalysisServerWrapper analysisServer) async {
-  lastExecuted = OperationType.Document;
+  lastExecuted = OperationType.document;
   final sw = Stopwatch()..start();
   for (var i = 0; i < src.length; i++) {
     final sw2 = Stopwatch()..start();
@@ -286,7 +286,7 @@ Future<num> testDocument(
 
 Future<num> testCompletions(
     String src, analysis_server.AnalysisServerWrapper wrapper) async {
-  lastExecuted = OperationType.Completion;
+  lastExecuted = OperationType.completion;
   final sw = Stopwatch()..start();
   for (var i = 0; i < src.length; i++) {
     final sw2 = Stopwatch()..start();
@@ -308,7 +308,7 @@ Future<num> testCompletions(
 
 Future<num> testFixes(
     String src, analysis_server.AnalysisServerWrapper wrapper) async {
-  lastExecuted = OperationType.Fixes;
+  lastExecuted = OperationType.fixes;
   final sw = Stopwatch()..start();
   for (var i = 0; i < src.length; i++) {
     final sw2 = Stopwatch()..start();
@@ -329,7 +329,7 @@ Future<num> testFixes(
 }
 
 Future<num> testFormat(String src) async {
-  lastExecuted = OperationType.Format;
+  lastExecuted = OperationType.format;
   final sw = Stopwatch()..start();
   final i = 0;
   lastOffset = i;
@@ -392,10 +392,10 @@ class MockContainer implements ServerContainer {
 
 class MockCache implements ServerCache {
   @override
-  Future<String> get(String key) => Future.value(null);
+  Future<String?> get(String key) => Future<String?>.value(null);
 
   @override
-  Future<void> set(String key, String value, {Duration expiration}) =>
+  Future<void> set(String key, String value, {Duration? expiration}) =>
       Future.value();
 
   @override
@@ -406,12 +406,12 @@ class MockCache implements ServerCache {
 }
 
 enum OperationType {
-  Compilation,
-  Analysis,
-  Completion,
-  Document,
-  Fixes,
-  Format
+  compilation,
+  analysis,
+  completion,
+  document,
+  fixes,
+  format
 }
 
 final int termWidth = io.stdout.hasTerminal ? io.stdout.terminalColumns : 200;

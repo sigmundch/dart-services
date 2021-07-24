@@ -12,12 +12,12 @@ import 'package:test/test.dart';
 void main() => defineTests();
 
 void defineTests() {
-  Compiler compiler;
+  late Compiler compiler;
 
   for (final nullSafety in [false, true]) {
     group('Null ${nullSafety ? 'Safe' : 'Unsafe'} Compiler', () {
       setUpAll(() async {
-        compiler = Compiler(Sdk(), nullSafety);
+        compiler = Compiler(Sdk.create(), nullSafety);
         await compiler.warmup();
       });
 
@@ -169,7 +169,8 @@ import 'foo.dart';
 void main() { missingMethod ('foo'); }
 ''';
         final result = await compiler.compile(code);
-        expect(result.problems.first.message,
+        expect(result.problems, hasLength(1));
+        expect(result.problems.single.message,
             equals('unsupported import: foo.dart'));
       });
 
@@ -179,8 +180,22 @@ import 'http://example.com';
 void main() { missingMethod ('foo'); }
 ''';
         final result = await compiler.compile(code);
-        expect(result.problems.first.message,
+        expect(result.problems, hasLength(1));
+        expect(result.problems.single.message,
             equals('unsupported import: http://example.com'));
+      });
+
+      test('multiple bad imports', () async {
+        const code = '''
+import 'package:foo';
+import 'package:bar';
+''';
+        final result = await compiler.compile(code);
+        expect(result.problems, hasLength(2));
+        expect(result.problems[0].message,
+            equals('unsupported import: package:foo'));
+        expect(result.problems[1].message,
+            equals('unsupported import: package:bar'));
       });
 
       test('disallow compiler warnings', () async {

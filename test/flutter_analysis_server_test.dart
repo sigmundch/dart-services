@@ -4,11 +4,10 @@
 
 library services.flutter_analyzer_server_test;
 
-import 'package:dart_services/src/common.dart';
 import 'package:dart_services/src/analysis_server.dart';
 import 'package:dart_services/src/analysis_servers.dart';
+import 'package:dart_services/src/common.dart';
 import 'package:dart_services/src/common_server_impl.dart';
-import 'package:dart_services/src/common_server_api.dart';
 import 'package:dart_services/src/protos/dart_services.pbserver.dart';
 import 'package:dart_services/src/server_cache.dart';
 import 'package:test/test.dart';
@@ -19,7 +18,7 @@ void defineTests() {
   for (final nullSafety in [false, true]) {
     group('Null ${nullSafety ? 'Safe' : 'Unsafe'} Flutter SDK analysis_server',
         () {
-      AnalysisServerWrapper analysisServer;
+      late AnalysisServerWrapper analysisServer;
 
       setUp(() async {
         analysisServer = FlutterAnalysisServerWrapper(nullSafety);
@@ -49,7 +48,7 @@ void defineTests() {
     group(
         'Null ${nullSafety ? 'Safe' : 'Unsafe'} Flutter SDK analysis_server with analysis servers',
         () {
-      AnalysisServersWrapper analysisServersWrapper;
+      late AnalysisServersWrapper analysisServersWrapper;
 
       setUp(() async {
         analysisServersWrapper = AnalysisServersWrapper(nullSafety);
@@ -78,7 +77,7 @@ void defineTests() {
     group(
         'Null ${nullSafety ? 'Safe' : 'Unsafe'} CommonServerImpl flutter analyze',
         () {
-      CommonServerImpl commonServerImpl;
+      late CommonServerImpl commonServerImpl;
 
       _MockContainer container;
       _MockCache cache;
@@ -120,10 +119,10 @@ class _MockContainer implements ServerContainer {
 
 class _MockCache implements ServerCache {
   @override
-  Future<String> get(String key) => Future.value(null);
+  Future<String?> get(String key) => Future<String?>.value(null);
 
   @override
-  Future<void> set(String key, String value, {Duration expiration}) =>
+  Future<void> set(String key, String value, {Duration? expiration}) =>
       Future.value();
 
   @override

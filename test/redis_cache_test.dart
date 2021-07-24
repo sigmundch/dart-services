@@ -23,8 +23,8 @@ void defineTests() {
   /// exercising the connection maintenance and exception handling.
   group('RedisCache', () {
     // Note: all caches share values between them.
-    RedisCache redisCache, redisCacheAlt;
-    Process redisProcess, redisAltProcess;
+    late RedisCache redisCache, redisCacheAlt;
+    Process? redisProcess, redisAltProcess;
     var logMessages = <String>[];
     // Critical section handling -- do not run more than one test at a time
     // since they talk to the same redis instances.
@@ -59,8 +59,8 @@ void defineTests() {
 
     tearDown(() async {
       if (redisAltProcess != null) {
-        redisAltProcess.kill();
-        await redisAltProcess.exitCode;
+        redisAltProcess!.kill();
+        await redisAltProcess!.exitCode;
         redisAltProcess = null;
       }
     });
@@ -68,8 +68,8 @@ void defineTests() {
     tearDownAll(() async {
       log.clearListeners();
       await Future.wait([redisCache.shutdown(), redisCacheAlt.shutdown()]);
-      redisProcess.kill();
-      await redisProcess.exitCode;
+      redisProcess!.kill();
+      await redisProcess!.exitCode;
     });
 
     test('Verify basic operation of RedisCache', () async {
@@ -122,11 +122,11 @@ void defineTests() {
           expect(
               logMessages.join('\n'),
               stringContainsInOrder([
-                'no cache available when setting key server:cversion:dart:',
+                'no cache available when setting key server:rc:cversion:dart:',
                 '+aKey',
-                'no cache available when getting key server:cversion:dart:',
+                'no cache available when getting key server:rc:cversion:dart:',
                 '+aKey',
-                'no cache available when removing key server:cversion:dart:',
+                'no cache available when removing key server:rc:cversion:dart:',
                 '+aKey',
               ]));
         } finally {
@@ -171,18 +171,18 @@ void defineTests() {
       await singleTestOnly.synchronized(() async {
         logMessages = [];
         await redisCache.set('beforeStop', 'truth');
-        redisProcess.kill(ProcessSignal.sigstop);
+        redisProcess!.kill(ProcessSignal.sigstop);
         // Don't fail the test before sending sigcont.
         final beforeStop = await redisCache.get('beforeStop');
         await redisCache.disconnected;
-        redisProcess.kill(ProcessSignal.sigcont);
+        redisProcess!.kill(ProcessSignal.sigcont);
         expect(beforeStop, isNull);
         await redisCache.connected;
         await expectLater(await redisCache.get('beforeStop'), equals('truth'));
         expect(
             logMessages.join('\n'),
             stringContainsInOrder([
-              'timeout on get operation for key server:aversion:dart:',
+              'timeout on get operation for key server:rc:aversion:dart:',
               '+beforeStop',
               '(aversion): reconnecting',
               '(aversion): Connected to redis server',
@@ -203,8 +203,8 @@ void defineTests() {
           await redisCacheHealing.connected;
           await redisCacheHealing.set('missingKey', 'value');
           // Kill process out from under the cache.
-          redisAltProcess.kill();
-          await redisAltProcess.exitCode;
+          redisAltProcess!.kill();
+          await redisAltProcess!.exitCode;
           redisAltProcess = null;
 
           // Try to talk to the cache and get an error. Wait for the disconnect

@@ -6,23 +6,33 @@ import 'dart:async';
 import 'dart:convert' show utf8;
 import 'dart:io';
 
-import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 import 'package:yaml/yaml.dart';
 
 class Sdk {
-  static Sdk _instance;
-  factory Sdk() => _instance ?? (_instance = Sdk._());
+  static Sdk? _instance;
 
-  String _versionFull = '';
-  String _flutterVersion = '';
+  /// The current version of the SDK, including any `-dev` suffix.
+  final String versionFull;
 
-  Sdk._() {
-    _versionFull =
-        (File(path.join(sdkPath, 'version')).readAsStringSync()).trim();
-    _flutterVersion =
-        (File(path.join(flutterSdkPath, 'version')).readAsStringSync()).trim();
+  final String flutterVersion;
+
+  /// The current version of the SDK, not including any `-dev` suffix.
+  final String version;
+
+  factory Sdk.create() {
+    return _instance ??= Sdk._(
+        versionFull: _readVersionFile(sdkPath),
+        flutterVersion: _readVersionFile(flutterSdkPath));
   }
+
+  Sdk._({required this.versionFull, required this.flutterVersion})
+      : version = versionFull.contains('-')
+            ? versionFull.substring(0, versionFull.indexOf('-'))
+            : versionFull;
+
+  static String _readVersionFile(String filePath) =>
+      (File(path.join(filePath, 'version')).readAsStringSync()).trim();
 
   /// Get the path to the Flutter SDK.
   static String get flutterSdkPath =>
@@ -33,18 +43,6 @@ class Sdk {
 
   /// Get the path to the Flutter binaries.
   static String get flutterBinPath => path.join(flutterSdkPath, 'bin');
-
-  /// Report the current version of the SDK.
-  String get version {
-    var ver = versionFull;
-    if (ver.contains('-')) ver = ver.substring(0, ver.indexOf('-'));
-    return ver;
-  }
-
-  /// Report the current version of the SDK, including any `-dev` suffix.
-  String get versionFull => _versionFull;
-
-  String get flutterVersion => _flutterVersion;
 }
 
 class DownloadingSdkManager {
@@ -62,7 +60,7 @@ class DownloadingSdkManager {
   /// `flutter-sdk-version.yaml` file.
   ///
   /// Note that this is an expensive operation.
-  Future<Sdk> createFromConfigFile() async {
+  Future<void> createFromConfigFile() async {
     final sdkConfig = getSdkConfigInfo();
 
     // flutter_sdk:
@@ -84,7 +82,7 @@ class DownloadingSdkManager {
       return createUsingFlutterVersion(version: config['version'] as String);
     } else {
       // Clone the repo if necessary but don't do any other setup.
-      return (await _cloneSdkIfNecessary()).asSdk();
+      await _cloneSdkIfNecessary();
     }
   }
 
@@ -92,8 +90,8 @@ class DownloadingSdkManager {
   /// channel.
   ///
   /// Note that this is an expensive operation.
-  Future<Sdk> createUsingFlutterChannel({
-    @required String channel,
+  Future<void> createUsingFlutterChannel({
+    required String channel,
   }) async {
     final sdk = await _cloneSdkIfNecessary();
 
@@ -109,16 +107,14 @@ class DownloadingSdkManager {
 
     // git pull
     await sdk.pull();
-
-    return sdk.asSdk();
   }
 
   /// Create a Flutter SDK in `flutter-sdk/` that tracks a specific Flutter
   /// version.
   ///
   /// Note that this is an expensive operation.
-  Future<Sdk> createUsingFlutterVersion({
-    @required String version,
+  Future<void> createUsingFlutterVersion({
+    required String version,
   }) async {
     final sdk = await _cloneSdkIfNecessary();
 
@@ -131,8 +127,6 @@ class DownloadingSdkManager {
 
     // Force downloading of Dart SDK before constructing the Sdk singleton.
     await sdk.init();
-
-    return sdk.asSdk();
   }
 
   Future<_DownloadedFlutterSdk> _cloneSdkIfNecessary() async {
@@ -162,11 +156,9 @@ class _DownloadedFlutterSdk {
   _DownloadedFlutterSdk(this.flutterSdkPath);
 
   Future<void> init() async {
-    // flutter --version takes ~28s
+    // `flutter --version` takes ~28s.
     await _execLog('bin/flutter', ['--version'], flutterSdkPath);
   }
-
-  Sdk asSdk() => Sdk();
 
   String get sdkPath => path.join(flutterSdkPath, 'bin/cache/dart-sdk');
 
@@ -178,7 +170,7 @@ class _DownloadedFlutterSdk {
 
   /// Perform a git clone, logging the command and any output, and throwing an
   /// exception if there are any issues with the clone.
-  Future<void> clone(List<String> args, {@required String cwd}) async {
+  Future<void> clone(List<String> args, {required String cwd}) async {
     final result = await _execLog('git', ['clone', ...args], cwd);
     if (result != 0) {
       throw 'result from git clone: $result';

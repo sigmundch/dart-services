@@ -13,7 +13,7 @@ import 'package:pedantic/pedantic.dart';
 
 import 'analysis_server.dart';
 import 'common_server_impl.dart' show BadRequest;
-import 'flutter_web.dart';
+import 'project.dart' as project;
 import 'protos/dart_services.pb.dart' as proto;
 import 'pub.dart';
 
@@ -23,30 +23,24 @@ class AnalysisServersWrapper {
   AnalysisServersWrapper(this._nullSafety);
   final bool _nullSafety;
 
-  FlutterWebManager _flutterWebManager;
-  DartAnalysisServerWrapper _dartAnalysisServer;
-  FlutterAnalysisServerWrapper _flutterAnalysisServer;
-
-  bool get running =>
-      _dartAnalysisServer.analysisServer != null &&
-      _flutterAnalysisServer.analysisServer != null;
+  late DartAnalysisServerWrapper _dartAnalysisServer;
+  late FlutterAnalysisServerWrapper _flutterAnalysisServer;
 
   // If non-null, this value indicates that the server is starting/restarting
   // and holds the time at which that process began. If null, the server is
   // ready to handle requests.
-  DateTime _restartingSince = DateTime.now();
+  DateTime? _restartingSince = DateTime.now();
 
   bool get isRestarting => (_restartingSince != null);
 
   // If the server has been trying and failing to restart for more than a half
   // hour, something is seriously wrong.
   bool get isHealthy => (_restartingSince == null ||
-      DateTime.now().difference(_restartingSince).inMinutes < 30);
+      DateTime.now().difference(_restartingSince!).inMinutes < 30);
 
-  Future<void> warmup() async {
+  Future<List<void>> warmup() async {
     _logger.info('Beginning AnalysisServersWrapper init().');
     _dartAnalysisServer = DartAnalysisServerWrapper(_nullSafety);
-    _flutterWebManager = FlutterWebManager();
     _flutterAnalysisServer = FlutterAnalysisServerWrapper(_nullSafety);
 
     await _dartAnalysisServer.init();
@@ -71,7 +65,7 @@ class AnalysisServersWrapper {
 
     _restartingSince = null;
 
-    return Future.wait(<Future<dynamic>>[
+    return Future.wait([
       _flutterAnalysisServer.warmup(),
       _dartAnalysisServer.warmup(),
     ]);
@@ -97,7 +91,7 @@ class AnalysisServersWrapper {
 
   AnalysisServerWrapper _getCorrectAnalysisServer(String source) {
     final imports = getAllImportsFor(source);
-    return _flutterWebManager.usesFlutterWeb(imports)
+    return project.usesFlutterWeb(imports)
         ? _flutterAnalysisServer
         : _dartAnalysisServer;
   }
@@ -160,11 +154,15 @@ class AnalysisServersWrapper {
 
   /// Check that the set of packages referenced is valid.
   Future<void> _checkPackageReferences(String source) async {
-    final imports = getAllImportsFor(source);
+    final unsupportedImports =
+        project.getUnsupportedImports(getAllImportsFor(source));
 
-    if (_flutterWebManager.hasUnsupportedImport(imports)) {
-      throw BadRequest(
-          'Unsupported input: ${_flutterWebManager.getUnsupportedImport(imports)}');
+    if (unsupportedImports.isNotEmpty) {
+      // TODO(srawlins): Do the work so that each unsupported input is its own
+      // error, with a proper SourceSpan.
+      final unsupportedUris =
+          unsupportedImports.map((import) => import.uri.stringValue);
+      throw BadRequest('Unsupported import(s): $unsupportedUris');
     }
   }
 }

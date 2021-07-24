@@ -16,6 +16,7 @@ import 'analysis_servers.dart';
 import 'common.dart';
 import 'compiler.dart';
 import 'protos/dart_services.pb.dart' as proto;
+import 'pub.dart';
 import 'sdk.dart';
 import 'server_cache.dart';
 
@@ -37,11 +38,10 @@ class CommonServerImpl {
   final ServerCache _cache;
   final bool _nullSafety;
 
-  Compiler _compiler;
-  AnalysisServersWrapper _analysisServers;
+  late Compiler _compiler;
+  late AnalysisServersWrapper _analysisServers;
 
   // Restarting and health status of the two Analysis Servers
-  bool get analysisServersRunning => _analysisServers.running;
   bool get isRestarting => _analysisServers.isRestarting;
   bool get isHealthy => _analysisServers.isHealthy;
 
@@ -57,7 +57,7 @@ class CommonServerImpl {
   Future<void> init() async {
     log.info('Beginning CommonServer init().');
     _analysisServers = AnalysisServersWrapper(_nullSafety);
-    _compiler = Compiler(Sdk(), _nullSafety);
+    _compiler = Compiler(Sdk.create(), _nullSafety);
 
     await _compiler.warmup();
     await _analysisServers.warmup();
@@ -85,7 +85,7 @@ class CommonServerImpl {
     }
 
     return _compileDart2js(request.source,
-        returnSourceMap: request.returnSourceMap ?? false);
+        returnSourceMap: request.returnSourceMap);
   }
 
   Future<proto.CompileDDCResponse> compileDDC(proto.CompileDDCRequest request) {
@@ -134,7 +134,7 @@ class CommonServerImpl {
       throw BadRequest('Missing parameter: \'source\'');
     }
 
-    return _analysisServers.format(request.source, request.offset ?? 0);
+    return _analysisServers.format(request.source, request.offset);
   }
 
   Future<proto.DocumentResponse> document(proto.SourceRequest request) async {
@@ -147,13 +147,14 @@ class CommonServerImpl {
 
     return proto.DocumentResponse()
       ..info.addAll(
-          await _analysisServers.dartdoc(request.source, request.offset) ??
-              <String, String>{});
+          await _analysisServers.dartdoc(request.source, request.offset));
   }
 
   Future<proto.VersionResponse> version(proto.VersionRequest _) {
-    final sdk = Sdk();
-    return Future<proto.VersionResponse>.value(
+    final sdk = Sdk.create();
+    final packageVersions = getPackageVersions(nullSafe: _nullSafety);
+
+    return Future.value(
       proto.VersionResponse()
         ..sdkVersion = sdk.version
         ..sdkVersionFull = sdk.versionFull
@@ -162,7 +163,8 @@ class CommonServerImpl {
         ..appEngineVersion = _container.version
         ..flutterDartVersion = sdk.version
         ..flutterDartVersionFull = sdk.versionFull
-        ..flutterVersion = sdk.flutterVersion,
+        ..flutterVersion = sdk.flutterVersion
+        ..packageVersions.addAll(packageVersions),
     );
   }
 
@@ -195,20 +197,20 @@ class CommonServerImpl {
 
       if (results.hasOutput) {
         final lineCount = source.split('\n').length;
-        final outputSize = (results.compiledJS.length / 1024).ceil();
+        final outputSize = (results.compiledJS?.length ?? 0 / 1024).ceil();
         final ms = watch.elapsedMilliseconds;
         log.info('PERF: Compiled $lineCount lines of Dart into '
             '${outputSize}kb of JavaScript in ${ms}ms using dart2js.');
         final sourceMap = returnSourceMap ? results.sourceMap : null;
 
-        final cachedResult = const JsonEncoder().convert(<String, String>{
+        final cachedResult = const JsonEncoder().convert(<String, String?>{
           'compiledJS': results.compiledJS,
           'sourceMap': sourceMap,
         });
         // Don't block on cache set.
         unawaited(_setCache(memCacheKey, cachedResult));
         final compileResponse = proto.CompileResponse();
-        compileResponse.result = results.compiledJS;
+        compileResponse.result = results.compiledJS ?? '';
         if (sourceMap != null) {
           compileResponse.sourceMap = sourceMap;
         }
@@ -247,20 +249,20 @@ class CommonServerImpl {
 
       if (results.hasOutput) {
         final lineCount = source.split('\n').length;
-        final outputSize = (results.compiledJS.length / 1024).ceil();
+        final outputSize = (results.compiledJS?.length ?? 0 / 1024).ceil();
         final ms = watch.elapsedMilliseconds;
         log.info('PERF: Compiled $lineCount lines of Dart into '
             '${outputSize}kb of JavaScript in ${ms}ms using DDC.');
 
         final cachedResult = const JsonEncoder().convert(<String, String>{
-          'compiledJS': results.compiledJS,
-          'modulesBaseUrl': results.modulesBaseUrl,
+          'compiledJS': results.compiledJS ?? '',
+          'modulesBaseUrl': results.modulesBaseUrl ?? '',
         });
         // Don't block on cache set.
         unawaited(_setCache(memCacheKey, cachedResult));
         return proto.CompileDDCResponse()
-          ..result = results.compiledJS
-          ..modulesBaseUrl = results.modulesBaseUrl;
+          ..result = results.compiledJS ?? ''
+          ..modulesBaseUrl = results.modulesBaseUrl ?? '';
       } else {
         final problems = results.problems;
         final errors = problems.map(_printCompileProblem).join('\n');
@@ -274,7 +276,7 @@ class CommonServerImpl {
     }
   }
 
-  Future<String> _checkCache(String query) => _cache.get(query);
+  Future<String?> _checkCache(String query) => _cache.get(query);
 
   Future<void> _setCache(String query, String result) =>
       _cache.set(query, result, expiration: _standardExpiration);

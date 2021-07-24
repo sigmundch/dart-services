@@ -15,7 +15,6 @@ import 'package:shelf/shelf_io.dart' as shelf;
 
 import 'src/common_server_api.dart';
 import 'src/common_server_impl.dart';
-import 'src/flutter_web.dart';
 import 'src/sdk.dart';
 import 'src/server_cache.dart';
 import 'src/shelf_cors.dart' as shelf_cors;
@@ -31,7 +30,7 @@ Future<void> main(List<String> args) async {
 
   // Cloud Run supplies the port to bind to in the environment.
   // Allow command line arg to override environment.
-  final port = int.tryParse(results['port'] as String ?? '') ??
+  final port = int.tryParse(results['port'] as String? ?? '') ??
       int.tryParse(Platform.environment['PORT'] ?? '');
   if (port == null) {
     stdout.writeln('Could not parse port value from either environment '
@@ -61,14 +60,14 @@ Future<void> main(List<String> args) async {
     Cloud Run Environment variables:
     $cloudRunEnvVars''');
 
-  final server = await EndpointsServer.serve(port, redisServerUri, nullSafety);
-  _logger.info('Listening on port ${server.port}');
+  await EndpointsServer.serve(port, redisServerUri, nullSafety);
+  _logger.info('Listening on port $port');
 }
 
 class EndpointsServer {
   static Future<EndpointsServer> serve(
       int port, String redisServerUri, bool nullSafety) async {
-    final endpointsServer = EndpointsServer._(port, redisServerUri, nullSafety);
+    final endpointsServer = EndpointsServer._(redisServerUri, nullSafety);
 
     await endpointsServer.init();
     endpointsServer.server = await shelf.serve(
@@ -79,18 +78,15 @@ class EndpointsServer {
     return endpointsServer;
   }
 
-  final int port;
-  HttpServer server;
-  String redisServerUri;
+  late final HttpServer server;
 
-  Pipeline pipeline;
-  Handler handler;
+  late final Pipeline pipeline;
+  late final Handler handler;
 
-  CommonServerApi commonServerApi;
-  CommonServerImpl _commonServerImpl;
-  FlutterWebManager flutterWebManager;
+  late final CommonServerApi commonServerApi;
+  late final CommonServerImpl _commonServerImpl;
 
-  EndpointsServer._(this.port, this.redisServerUri, bool nullSafety) {
+  EndpointsServer._(String? redisServerUri, bool nullSafety) {
     _commonServerImpl = CommonServerImpl(
       _ServerContainer(),
       redisServerUri == null
