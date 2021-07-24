@@ -424,7 +424,7 @@ String createPubspec({
 name: $_samplePackageName
 environment:
   sdk: '>=${nullSafety ? '2.12.0' : '2.10.0'} <3.0.0'
- ependencies:
+dependencies:
 ''';
 
   if (includeFlutterWeb) {
